@@ -1,0 +1,121 @@
+SSN,Age,Zipcode,Disease
+1,26,29018,Heart Disease
+2,28,29016,Heart Disease
+3,29,29010,Heart Disease
+4,41,18001,Flue
+5,45,18002,Heart Disease
+6,43,18003,Cancer
+7,33,28001,Cancer
+8,37,28002,Heart Disease
+9,34,28080,Cancer
+10,42,18002,Cancer
+11,25,29010,Asthma
+12,28,28017,Flue
+13,54,28001,Heart Disease
+14,49,28019,Heart Disease
+15,27,29022,Cancer
+16,74,18030,Heart Disease
+17,36,18032,Flue
+18,25,18030,Flue
+19,25,28002,Heart Disease
+20,76,18002,Cancer
+21,31,29022,Heart Disease
+22,41,29022,Asthma
+23,33,18001,Flue
+24,62,28001,Cancer
+25,57,28022,Heart Disease
+26,25,18031,Heart Disease
+27,65,29022,Cancer
+28,42,28020,Flue
+29,51,28017,Cancer
+30,72,18003,Diabetes
+31,37,29010,Flue
+32,55,29020,Asthma
+33,68,28020,Cancer
+34,26,18001,Flue
+35,32,18010,Heart Disease
+36,53,28019,Heart Disease
+37,64,29010,Diabetes
+38,58,18010,Cancer
+39,44,18031,Cancer
+40,73,28020,Heart Disease
+41,27,28080,Cancer
+42,64,29010,Heart Disease
+43,66,18020,Diabetes
+44,65,28020,Cancer
+45,46,28021,Cancer
+46,51,28017,Heart Disease
+47,29,29020,Heart Disease
+48,71,18020,Heart Disease
+49,37,28018,Cancer
+50,77,29020,Heart Disease
+51,50,28018,Flue
+52,78,18002,Asthma
+53,77,29022,Heart Disease
+54,48,28017,Diabetes
+55,46,28002,Heart Disease
+56,33,18002,Heart Disease
+57,36,29018,Cancer
+58,59,18003,Heart Disease
+59,22,18002,Cancer
+60,45,18031,Flue
+61,30,28022,Asthma
+62,61,18032,Diabetes
+63,25,28020,Hypertension
+64,71,28021,Asthma
+65,47,28018,Cancer
+66,28,29020,Flue
+67,25,28001,Heart Disease
+68,35,28020,Heart Disease
+69,43,18031,Heart Disease
+70,22,18030,Heart Disease
+71,28,28017,Flue
+72,26,28001,Flue
+73,31,18032,Heart Disease
+74,44,18031,Cancer
+75,29,18001,Asthma
+76,51,29020,Cancer
+77,27,18002,Heart Disease
+78,43,28023,Heart Disease
+79,75,28022,Heart Disease
+80,23,28001,Hypertension
+81,55,28017,Heart Disease
+82,56,29018,Diabetes
+83,41,18032,Asthma
+84,66,28080,Flue
+85,32,28017,Diabetes
+86,56,29022,Diabetes
+87,43,18032,Heart Disease
+88,73,28001,Asthma
+89,74,28018,Diabetes
+90,36,28001,Flue
+91,44,28023,Heart Disease
+92,23,28080,Cancer
+93,34,28022,Flue
+94,44,28020,Asthma
+95,68,28017,Hypertension
+96,45,29010,Heart Disease
+97,36,29020,Heart Disease
+98,35,29020,Flue
+99,79,18031,Asthma
+100,52,18032,Cancer
+101,63,29010,Asthma
+102,29,28018,Asthma
+103,70,28001,Cancer
+104,33,28019,Asthma
+105,43,29010,Asthma
+106,68,28018,Cancer
+107,69,29010,Diabetes
+108,32,18002,Heart Disease
+109,59,28020,Asthma
+110,31,18031,Asthma
+111,52,28021,Hypertension
+112,31,29022,Flue
+113,23,29018,Asthma
+114,68,18032,Heart Disease
+115,69,18002,Cancer
+116,77,28001,Asthma
+117,35,29018,Heart Disease
+118,40,29021,Heart Disease
+119,59,18010,Heart Disease
+120,48,18002,Heart Disease
