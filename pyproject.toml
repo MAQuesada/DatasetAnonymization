@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dataset-anonymization"
+version = "0.1.0"
+description = "Dataset anonymization project"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pandas",
+    "python-dotenv",
+    "streamlit",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dataset_anonymization"]
+
+[tool.uv]
+dev-dependencies = []

@@ -5,3 +5,5 @@ __pycache__/
 .uv/
 dist/
 *.egg-info/
+
+/dataset_data/
