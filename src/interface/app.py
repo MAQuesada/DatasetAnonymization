@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from typing import Any
 
-# Ensure dataset_anonymization is importable (e.g. when running: streamlit run src/interface/app.py)
 _app_file = Path(__file__).resolve()
-_src_dir = _app_file.parent.parent  # src/interface -> src
-_project_root = _src_dir.parent     # src -> project root
+_src_dir = _app_file.parent.parent
+_project_root = _src_dir.parent
 for _dir in (_src_dir, _project_root):
     _dir_str = str(_dir)
     if _dir_str not in sys.path and (_dir / "dataset_anonymization").exists():
@@ -114,13 +114,10 @@ def _render_create_new() -> None:
 
 
 def _format_stats_table(stats_df: pd.DataFrame) -> pd.DataFrame:
-    """Round numeric stats and use '-' for missing/non-applicable values."""
     out = stats_df.copy()
     for col in ["mean", "min", "max", "std", "median"]:
         if col in out.columns:
-            out[col] = out[col].apply(
-                lambda x: "-" if pd.isna(x) else round(float(x), 4)
-            )
+            out[col] = out[col].apply(lambda x: "-" if pd.isna(x) else round(float(x), 4))
     for col in ["mode", "mode_count"]:
         if col in out.columns:
             out[col] = out[col].apply(lambda x: "-" if pd.isna(x) else x)
@@ -148,7 +145,11 @@ def _render_actions(manager: DatasetManager) -> None:
     meta = manager.metadata
     identifiers = meta.identifiers
     numeric_cols = [c for c, t in meta.column_types.items() if t == "numeric"]
+    categorical_cols = [c for c, t in meta.column_types.items() if t == "categorical"]
 
+    # ------------------------------------------------------------------ #
+    # De-identification                                                    #
+    # ------------------------------------------------------------------ #
     st.subheader("De-identification")
     id_col_opt = [None] + identifiers if identifiers else []
     id_choice = st.selectbox(
@@ -157,7 +158,7 @@ def _render_actions(manager: DatasetManager) -> None:
         format_func=lambda x: "All identifiers" if x is None else x,
         key="deid_col",
     )
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
         if st.button("Random pseudonyms"):
             try:
@@ -174,21 +175,44 @@ def _render_actions(manager: DatasetManager) -> None:
                 st.rerun()
             except Exception as e:
                 st.error(str(e))
-    if manager.ope_mapping_columns:
-        if st.button("Reverse OPE pseudonyms"):
+    with col3:
+        if st.button("HMAC pseudonyms"):
             try:
-                manager.reverse_order_preserving_pseudonyms(identifier_column=id_choice)
-                st.success("Reversed.")
+                manager.deidentify_with_hmac_pseudonyms(identifier_column=id_choice)
+                st.success("Done.")
                 st.rerun()
             except Exception as e:
                 st.error(str(e))
 
+    col_rev1, col_rev2 = st.columns(2)
+    with col_rev1:
+        if manager.ope_mapping_columns:
+            if st.button("Reverse OPE pseudonyms"):
+                try:
+                    manager.reverse_order_preserving_pseudonyms(identifier_column=id_choice)
+                    st.success("Reversed.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(str(e))
+    with col_rev2:
+        if manager.hmac_mapping_columns:
+            if st.button("Reverse HMAC pseudonyms"):
+                try:
+                    manager.reverse_hmac_pseudonyms(identifier_column=id_choice)
+                    st.success("Reversed.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(str(e))
+
+    # ------------------------------------------------------------------ #
+    # Numeric anonymization                                                #
+    # ------------------------------------------------------------------ #
     st.subheader("Numeric anonymization")
     if not numeric_cols:
         st.caption("No numeric columns in metadata.")
     else:
         num_col = st.selectbox("Numeric column", numeric_cols, key="num_col")
-        tab_gen, tab_pert = st.tabs(["Generalize", "Perturb"])
+        tab_gen, tab_pert, tab_laplace = st.tabs(["Generalize", "Perturb (Gaussian)", "Perturb (Laplace)"])
         with tab_gen:
             bins = st.number_input("Bins", min_value=2, value=10, key="bins")
             include_lowest = st.checkbox("Include lowest", value=True, key="include_lowest")
@@ -203,13 +227,58 @@ def _render_actions(manager: DatasetManager) -> None:
             noise_std = st.number_input("Noise (fraction of range)", min_value=0.01, value=0.05, step=0.01, key="noise_std")
             rs = st.number_input("Random state (optional)", value=-1, min_value=-1, key="rs")
             random_state: int | None = None if rs < 0 else int(rs)
-            if st.button("Apply perturbation"):
+            if st.button("Apply perturbation (Gaussian)"):
                 try:
                     manager.perturb_numeric_column(num_col, noise_std=noise_std, random_state=random_state)
                     st.success("Done.")
                     st.rerun()
                 except Exception as e:
                     st.error(str(e))
+        with tab_laplace:
+            epsilon = st.number_input("Epsilon (privacy budget)", min_value=0.01, value=1.0, step=0.1, key="epsilon")
+            sensitivity = st.number_input("Sensitivity", min_value=0.01, value=1.0, step=0.1, key="sensitivity")
+            rs_lap = st.number_input("Random state (optional)", value=-1, min_value=-1, key="rs_lap")
+            random_state_lap: int | None = None if rs_lap < 0 else int(rs_lap)
+            st.caption("Smaller epsilon = more noise = stronger privacy guarantee.")
+            if st.button("Apply perturbation (Laplace)"):
+                try:
+                    manager.perturb_numeric_column_laplace(
+                        num_col, sensitivity=sensitivity, epsilon=epsilon, random_state=random_state_lap
+                    )
+                    st.success("Done.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(str(e))
+
+    # ------------------------------------------------------------------ #
+    # Categorical generalization                                           #
+    # ------------------------------------------------------------------ #
+    st.subheader("Categorical generalization")
+    if not categorical_cols:
+        st.caption("No categorical columns in metadata.")
+    else:
+        cat_col = st.selectbox("Categorical column", categorical_cols, key="cat_col")
+        st.caption(
+            'Enter a mapping as JSON. Example: {"Flu": "Respiratory", "Cold": "Respiratory", "Diabetes": "Metabolic"}'
+        )
+        mapping_input = st.text_area("Mapping (JSON)", value="{}", key="cat_mapping")
+        default_val = st.text_input(
+            "Default for unmapped values (leave empty to keep original)", value="", key="cat_default"
+        )
+        if st.button("Apply categorical generalization"):
+            try:
+                mapping = json.loads(mapping_input)
+                if not isinstance(mapping, dict):
+                    st.error("Mapping must be a JSON object.")
+                else:
+                    default = default_val.strip() if default_val.strip() else None
+                    manager.generalize_categorical_column(cat_col, mapping=mapping, default=default)
+                    st.success("Done.")
+                    st.rerun()
+            except json.JSONDecodeError as e:
+                st.error(f"Invalid JSON: {e}")
+            except Exception as e:
+                st.error(str(e))
 
     if st.button("Reset working dataset to original"):
         manager.reset_working_dataset()
