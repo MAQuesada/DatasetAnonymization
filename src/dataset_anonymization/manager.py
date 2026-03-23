@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pickle
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -314,6 +315,92 @@ class DatasetManager:
             self._working_df[column] = perturbed.round().astype(series.dtype)
         else:
             self._working_df[column] = perturbed
+
+    def mask_column(
+        self,
+        column: str,
+        strategy: str,
+        k: Optional[int] = None,
+        regex_pattern: Optional[str] = None,
+    ) -> None:
+        """Mask one column by treating each non-null value as a string.
+
+        Supported strategies:
+        - mask_first_k
+        - mask_last_k
+        - mask_before_first_space
+        - mask_after_last_space
+        - mask_regex
+
+        Parameters
+        ----------
+        column:
+            Target column name in the working dataset.
+        strategy:
+            One masking strategy from the supported list.
+        k:
+            Number of characters to mask for first/last-k strategies.
+        regex_pattern:
+            Regular expression to replace with '*' for mask_regex strategy.
+        """
+        self._ensure_column_exists(column)
+
+        valid_strategies = {
+            "mask_first_k",
+            "mask_last_k",
+            "mask_before_first_space",
+            "mask_after_last_space",
+            "mask_regex",
+        }
+        if strategy not in valid_strategies:
+            raise ValueError(f"Unknown masking strategy '{strategy}'.")
+
+        if strategy in {"mask_first_k", "mask_last_k"}:
+            if k is None or k < 0:
+                raise ValueError("Parameter 'k' must be a non-negative integer.")
+
+        if strategy == "mask_regex":
+            if not regex_pattern:
+                raise ValueError("Parameter 'regex_pattern' is required for mask_regex strategy.")
+            try:
+                compiled_pattern = re.compile(regex_pattern)
+            except re.error as e:
+                raise ValueError(f"Invalid regex pattern: {e}") from e
+        else:
+            compiled_pattern = None
+
+        def _mask_value(value: Any) -> Any:
+            if pd.isna(value):
+                return value
+
+            text = str(value)
+
+            if strategy == "mask_first_k":
+                n = min(k or 0, len(text))
+                return ("*" * n) + text[n:]
+
+            if strategy == "mask_last_k":
+                n = min(k or 0, len(text))
+                if n == 0:
+                    return text
+                return text[:-n] + ("*" * n)
+
+            if strategy == "mask_before_first_space":
+                first_space = text.find(" ")
+                if first_space == -1:
+                    return text
+                return ("*" * first_space) + text[first_space:]
+
+            if strategy == "mask_after_last_space":
+                last_space = text.rfind(" ")
+                if last_space == -1:
+                    return text
+                return text[: last_space + 1] + ("*" * (len(text) - last_space - 1))
+
+            # strategy == "mask_regex"
+            return compiled_pattern.sub("*", text)  # type: ignore[union-attr]
+
+        self._working_df[column] = self._working_df[column].apply(_mask_value)
 
     def compute_precision_privacy_tradeoff(self) -> Tuple[float, float]:
         """Compute a toy precision vs. privacy tradeoff metric.
