@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any
 
 # Ensure dataset_anonymization is importable (e.g. when running: streamlit run src/interface/app.py)
 _app_file = Path(__file__).resolve()
@@ -121,10 +120,27 @@ def _format_stats_table(stats_df: pd.DataFrame) -> pd.DataFrame:
             out[col] = out[col].apply(
                 lambda x: "-" if pd.isna(x) else round(float(x), 4)
             )
-    for col in ["mode", "mode_count"]:
-        if col in out.columns:
-            out[col] = out[col].apply(lambda x: "-" if pd.isna(x) else x)
     return out
+
+
+def _style_data_by_role(df: pd.DataFrame, metadata: DatasetMetadata) -> pd.io.formats.style.Styler:
+    """Color columns based on metadata role."""
+    identifiers = set(metadata.identifiers)
+    quasi_identifiers = set(metadata.quasi_identifiers)
+    sensitive = set(metadata.sensitive_attributes)
+
+    def _column_style(col_name: str) -> str:
+        # Priority if a column appears in multiple lists: sensitive > identifier > quasi.
+        if col_name in sensitive:
+            return "background-color: #fff5f5; color: #1f2937;"  # very soft red + dark text
+        if col_name in identifiers:
+            return "background-color: #f3fbf5; color: #1f2937;"  # very soft green + dark text
+        if col_name in quasi_identifiers:
+            return "background-color: #fffdf2; color: #1f2937;"  # very soft yellow + dark text
+        return ""
+
+    style_map = {col: _column_style(col) for col in df.columns}
+    return df.style.apply(lambda _: [style_map[c] for c in df.columns], axis=1)
 
 
 def _render_data_view(manager: DatasetManager, n_rows: int, dataset_key: str) -> None:
@@ -133,8 +149,10 @@ def _render_data_view(manager: DatasetManager, n_rows: int, dataset_key: str) ->
     )
     df = manager.get_original_dataset() if view == "Original" else manager.get_working_dataset()
     display = df.head(n_rows)
-    st.dataframe(display, use_container_width=True, key=f"dataframe_{dataset_key}")
+    styled_display = _style_data_by_role(display, manager.metadata)
+    st.dataframe(styled_display, use_container_width=True, key=f"dataframe_{dataset_key}")
     st.caption(f"Showing first {n_rows} of {len(df)} rows. Columns: {list(df.columns)}")
+    st.caption("Legend: identifiers = green, quasi-identifiers = yellow, sensitive attributes = red.")
 
     use_working = view == "Modified"
     stats_df = manager.get_column_statistics(use_working=use_working)
@@ -148,11 +166,12 @@ def _render_actions(manager: DatasetManager) -> None:
     meta = manager.metadata
     identifiers = meta.identifiers
     numeric_cols = [c for c, t in meta.column_types.items() if t == "numeric"]
+    all_cols = list(manager.get_working_dataset().columns)
 
     st.subheader("De-identification")
     id_col_opt = [None] + identifiers if identifiers else []
     id_choice = st.selectbox(
-        "Identifier column (None = all)",
+        "Identifier column",
         options=id_col_opt,
         format_func=lambda x: "All identifiers" if x is None else x,
         key="deid_col",
@@ -215,6 +234,70 @@ def _render_actions(manager: DatasetManager) -> None:
         manager.reset_working_dataset()
         st.success("Reset.")
         st.rerun()
+
+    st.subheader("Masking")
+    if not all_cols:
+        st.caption("No columns available for masking.")
+    else:
+        mask_col = st.selectbox("Column to mask", all_cols, key="mask_col")
+        mask_strategy = st.radio(
+            "Masking strategy",
+            options=[
+                "mask_first_k",
+                "mask_last_k",
+                "mask_before_first_space",
+                "mask_after_last_space",
+                "mask_regex",
+            ],
+            format_func=lambda s: {
+                "mask_first_k": "Mask first K characters",
+                "mask_last_k": "Mask last K characters",
+                "mask_before_first_space": "Mask before first space",
+                "mask_after_last_space": "Mask after last space",
+                "mask_regex": "Advanced: mask by regular expression",
+            }[s],
+            key="mask_strategy",
+        )
+
+        k_value: int | None = None
+        regex_value: str | None = None
+
+        if mask_strategy in {"mask_first_k", "mask_last_k"}:
+            k_value = int(
+                st.number_input(
+                    "K",
+                    min_value=0,
+                    value=1,
+                    step=1,
+                    key="mask_k",
+                )
+            )
+
+        if mask_strategy == "mask_regex":
+            regex_value = st.text_input(
+                "Regex pattern",
+                value=r"\d",
+                key="mask_regex_pattern",
+                help="Example: \\d masks every digit. Example: [AEIOUaeiou] masks vowels.",
+            )
+            st.caption(
+                "Regex example: `\\d` -> replaces all digits with `*`."
+            )
+
+        if st.button("Apply masking"):
+            try:
+                if mask_col is None:
+                    raise ValueError("Select a column to mask.")
+                manager.mask_column(
+                    column=mask_col,
+                    strategy=mask_strategy,
+                    k=k_value,
+                    regex_pattern=regex_value,
+                )
+                st.success("Masking applied.")
+                st.rerun()
+            except Exception as e:
+                st.error(str(e))
 
 
 def _render_export_and_save(manager: DatasetManager) -> None:
