@@ -1,6 +1,7 @@
 import pandas as pd
 import random
 from pathlib import Path
+import streamlit as st
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -209,11 +210,11 @@ def get_gender_proportion(malaga_df, ages_df, mode):
     """
 
     if mode == "municipality":
-        municipalities = malaga_df["Municipio"].unique()
+        municipalities = malaga_df["Municipios"].unique()
 
         result = {}
         for m in municipalities:
-            sub = malaga_df[malaga_df["Municipio"] == m]
+            sub = malaga_df[malaga_df["Municipios"] == m]
             men = sub[sub["Sexo"] == "Hombres"]["Total"].sum()
             women = sub[sub["Sexo"] == "Mujeres"]["Total"].sum()
             total = men + women
@@ -224,8 +225,8 @@ def get_gender_proportion(malaga_df, ages_df, mode):
         df = ages_df[(ages_df["Sexo"].isin(["Hombres", "Mujeres"]))]
 
         result = {}
-        for group in df["Grupo Quinquenal de edad"].unique():
-            sub = df[df["Grupo Quinquenal de edad"] == group]
+        for group in df["Grupo quinquenal de edad"].unique():
+            sub = df[df["Grupo quinquenal de edad"] == group]
             men = sub[sub["Sexo"] == "Hombres"]["Total"].sum()
             women = sub[sub["Sexo"] == "Mujeres"]["Total"].sum()
             total = men + women
@@ -233,7 +234,7 @@ def get_gender_proportion(malaga_df, ages_df, mode):
                 result[group] = (men / total, women / total)
 
     else:
-        df = ages_df[(ages_df["Grupo Quinquenal de edad"] == "Todas las edades")]
+        df = ages_df[(ages_df["Grupo quinquenal de edad"] == "Todas las edades")]
 
         men = df[df["Sexo"] == "Hombres"]["Total"].sum()
         women = df[df["Sexo"] == "Mujeres"]["Total"].sum()
@@ -255,10 +256,10 @@ def get_age_proportion(ages_df):
     """
     df = ages_df[
         (ages_df["Sexo"] == "Total")
-        & (ages_df["Grupo Quinquenal de edad"] != "Todas las edades")
+        & (ages_df["Grupo quinquenal de edad"] != "Todas las edades")
     ]
 
-    return (df["Grupo Quinquenal de edad"].tolist(), df["Total"].tolist())
+    return (df["Grupo quinquenal de edad"].tolist(), df["Total"].tolist())
 
 
 # ========== SELECT RANDOM VALUE OR A NORMAL PROPORTION VALUE ========
@@ -326,6 +327,48 @@ def generate_age_general(ages_dist, f):
     return age
 
 
+# =================== PREPARE DATA =========================================
+
+
+# This data is always static in each dataset generation. To avoid overflow the page,
+# we are going to say that it stays in cache all the time
+@st.cache_data
+def prepare_all_data():
+    """
+    Load the required dataframe to generate dataset and also prepare all the independent distribution
+    and dataframes respect the user actions. In this way, we haven't to redo the operation each time.
+
+    Output:
+     - Name distribution sample
+     - First and Second surnames distribution sample
+     - Map between name and mean age
+     - Malaga dataframe and municipality distribution
+     - Age dataframe
+     - Age distribution without dependencies
+    """
+    # 1. Load dataset
+    names_male, names_female, surnames_df, malaga_df, ages_df = load_data()
+
+    # 2. Prepare dataset and dictionaries
+    name_dist = prepare_names(names_male, names_female)
+    age_name_map = prepare_age_by_name(names_male, names_female)
+    surname1_dist, surname2_dist = prepare_surnames(surnames_df)
+    malaga_df, municipality_dist = prepare_municipalities(malaga_df)
+    ages_df = prepare_age_default(ages_df)
+    age_dist = get_age_proportion(ages_df)
+
+    return (
+        name_dist,
+        age_name_map,
+        surname1_dist,
+        surname2_dist,
+        malaga_df,
+        municipality_dist,
+        ages_df,
+        age_dist,
+    )
+
+
 # =================== MAIN FUNCTION ============================================
 def generate_dataset(n, columns, f):
     """
@@ -346,15 +389,25 @@ def generate_dataset(n, columns, f):
         - Municipality. Use "malagueños_por_generos.csv" to be generated.
 
     """
-    # 1. Load dataset
-    names_male, names_female, surnames_df, malaga_df, ages_df = load_data()
+    # 1. Load dataset and prepare it along the distribution samples. They are going to be cached in memory
+    (
+        name_dist,
+        age_name_map,
+        surname1_dist,
+        surname2_dist,
+        malaga_df,
+        municipality_dist,
+        ages_df,
+        age_dist,
+    ) = prepare_all_data()
 
-    # 2. Prepare dataset and dictionaries
-    name_dist = prepare_names(names_male, names_female)
-    age_name_map = prepare_age_by_name(names_male, names_female)
-    surname1_dist, surname2_dist = prepare_surnames(surnames_df)
-    malaga_df, municipality_dist = prepare_municipalities(malaga_df)
-    ages_df = prepare_age_default(ages_df)
+    # 2. To avoid continouos access to memory, we store it in a variable
+    use_name = columns.get("name", False)
+    use_surname1 = columns.get("surname1", False)
+    use_surname2 = columns.get("surname2", False)
+    use_gender = columns.get("gender", False)
+    use_age = columns.get("age", False)
+    use_municipality = columns.get("municipality", False)
 
     # 3. Get age and gender proportion
     # Determine dependency mode
@@ -365,19 +418,10 @@ def generate_dataset(n, columns, f):
     else:
         mode = "Total"
     gender_info = get_gender_proportion(malaga_df, ages_df, mode)
-    age_dist = get_age_proportion(ages_df)
-
-    # 4. To avoid continouos access to memory, we store it in a variable
-    use_name = columns.get("name", False)
-    use_surname1 = columns.get("surname1", False)
-    use_surname2 = columns.get("surname2", False)
-    use_gender = columns.get("gender", False)
-    use_age = columns.get("age", False)
-    use_municipality = columns.get("municipality", False)
 
     data = []
 
-    # 5. We start to generate data on each row
+    # 4. We start to generate data on each row
     for _ in range(n):
         row = {}
 
