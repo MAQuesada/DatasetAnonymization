@@ -370,7 +370,7 @@ def prepare_all_data():
 
 
 # =================== MAIN FUNCTION ============================================
-def generate_dataset(n, columns, f):
+def generate_dataset(n, columns, f, progress_callback=None):
     """
     INPUTS:
         - n => Number of samples we want to generate on dataset
@@ -381,6 +381,7 @@ def generate_dataset(n, columns, f):
 
     A dataframe is generated depending on some real data from INE. The user can select
     the following column:
+    
         - Name. If it is selected, Age would be depend on it. Name depends on Gender. Use "nombres_por_edad_media.xlsx" file
         - 1º surname. Use "apellidos_frecuencia.xls" to be generated.
         - 2º surname. Use "apellidos_frecuencia.xls" to be generated.
@@ -422,7 +423,10 @@ def generate_dataset(n, columns, f):
     data = []
 
     # 4. We start to generate data on each row
-    for _ in range(n):
+    for i in range(n):
+        if progress_callback and i % 10 == 0:
+            progress_callback(i / n)
+
         row = {}
 
         # Aux Variables to know gender dependencies

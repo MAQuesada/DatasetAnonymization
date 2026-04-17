@@ -50,7 +50,12 @@ valid = n_samples > 0 and any(columns.values())
 # BUTTON
 if st.button("Generate dataset", disabled=not valid):
     with st.spinner("Generating dataset..."):
-        df = generate_dataset(n_samples, columns, f)
+        progress_bar = st.progress(0)
+
+        def update_progress(p):
+            progress_bar.progress(p)
+
+        df = generate_dataset(n_samples, columns, f, progress_callback=update_progress)
         st.session_state.dataset = df
 
     st.switch_page("pages/result.py")
