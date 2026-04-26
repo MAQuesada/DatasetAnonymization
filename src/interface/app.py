@@ -93,6 +93,17 @@ def _render_create_new() -> None:
     identifiers = st.multiselect("Identifiers (uniquely identify a person)", options=columns, key="identifiers")
     quasi = st.multiselect("Quasi-identifiers", options=columns, key="quasi")
     sensitive = st.multiselect("Sensitive attributes", options=columns, key="sensitive")
+    epsilon = st.number_input(
+        "Epsilon for differential privacy queries",
+        min_value=0.01,
+        value=1.0,
+        step=0.1,
+        key="epsilon",
+        help=(
+            "Lower epsilon means more privacy and more noise. "
+            "Higher epsilon means less privacy and less noise."
+        ),
+    )
 
     if st.button("Create dataset"):
         metadata = DatasetMetadata(
@@ -100,6 +111,7 @@ def _render_create_new() -> None:
             identifiers=identifiers,
             quasi_identifiers=quasi,
             sensitive_attributes=sensitive,
+            epsilon=float(epsilon),
         )
         try:
             manager = DatasetManager(df, metadata)
@@ -369,6 +381,190 @@ def _render_actions(manager: DatasetManager) -> None:
                 st.error(f"Unexpected error: {e}")
 
 
+def _render_differential_privacy_queries(manager: DatasetManager) -> None:
+    st.subheader("Differential Privacy Queries")
+
+    st.caption(
+        "Run aggregate queries over the loaded dataset. "
+        "The app adds Laplace noise using the dataset epsilon."
+    )
+
+    current_epsilon = manager.get_epsilon()
+
+    epsilon = st.number_input(
+        "Epsilon",
+        min_value=0.01,
+        value=current_epsilon,
+        step=0.1,
+        key="dp_query_epsilon",
+        help=(
+            "Lower epsilon means more privacy and more noise. "
+            "Higher epsilon means less privacy and less noise."
+        ),
+    )
+
+    try:
+        manager.set_epsilon(float(epsilon))
+    except ValueError as e:
+        st.error(str(e))
+        return
+
+    st.info(
+        "For testing, the app shows both the true result and the noisy result. "
+        "In a real privacy scenario, only the noisy result should be shown."
+    )
+
+    all_cols = list(manager.get_original_dataset().columns)
+    numeric_cols = [
+        col for col, col_type in manager.metadata.column_types.items()
+        if col_type == "numeric"
+    ]
+
+    query_label = st.selectbox(
+        "Query type",
+        options=[
+            "Count rows",
+            "Sum numeric column",
+            "Mean numeric column",
+            "Histogram / count by category",
+        ],
+        key="dp_query_type",
+    )
+
+    query_map = {
+        "Count rows": "count",
+        "Sum numeric column": "sum",
+        "Mean numeric column": "mean",
+        "Histogram / count by category": "histogram",
+    }
+
+    query_type = query_map[query_label]
+
+    selected_column: str | None = None
+
+    if query_type in {"sum", "mean"}:
+        if not numeric_cols:
+            st.warning("No numeric columns available for this query.")
+            return
+
+        selected_column = st.selectbox(
+            "Numeric column",
+            options=numeric_cols,
+            key="dp_numeric_column",
+        )
+
+    elif query_type == "histogram":
+        selected_column = st.selectbox(
+            "Column",
+            options=all_cols,
+            key="dp_histogram_column",
+        )
+
+    use_filter = st.checkbox("Apply filter", value=False, key="dp_use_filter")
+
+    filter_column: str | None = None
+    filter_value: str | None = None
+
+    if use_filter:
+        filter_column = st.selectbox(
+            "Filter column",
+            options=all_cols,
+            key="dp_filter_column",
+        )
+
+        filter_values = (
+            manager.get_original_dataset()[filter_column]
+            .dropna()
+            .astype(str)
+            .unique()
+            .tolist()
+        )
+
+        filter_values = sorted(filter_values)
+
+        if not filter_values:
+            st.warning("The selected filter column has no values.")
+            return
+
+        filter_value = st.selectbox(
+            "Filter value",
+            options=filter_values,
+            key="dp_filter_value",
+        )
+
+    random_state_input = st.number_input(
+        "Random state optional",
+        min_value=-1,
+        value=-1,
+        step=1,
+        key="dp_random_state",
+        help="Use -1 for random noise each time. Use another value to reproduce the same noise.",
+    )
+
+    random_state = None if random_state_input < 0 else int(random_state_input)
+
+    if st.button("Run differentially private query", key="dp_run_query"):
+        try:
+            result = manager.query_with_differential_privacy(
+                query_type=query_type,
+                column=selected_column,
+                filter_column=filter_column if use_filter else None,
+                filter_value=filter_value if use_filter else None,
+                random_state=random_state,
+            )
+
+            st.success("Query executed.")
+
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Epsilon", result["epsilon"])
+            col2.metric("Sensitivity", result["sensitivity"])
+            col3.metric("Noise added", result["noise_added"])
+
+            st.write(f"**Filter:** {result['filter_desc']}")
+
+            if query_type == "histogram":
+                true_df = pd.DataFrame(
+                    list(result["true_result"].items()),
+                    columns=["value", "true_count"],
+                )
+
+                noisy_df = pd.DataFrame(
+                    list(result["noisy_result"].items()),
+                    columns=["value", "noisy_count"],
+                )
+
+                merged = true_df.merge(noisy_df, on="value", how="outer")
+
+                st.subheader("Query result")
+                st.dataframe(merged, use_container_width=True)
+
+            else:
+                result_df = pd.DataFrame(
+                    [
+                        {
+                            "query_type": result["query_type"],
+                            "column": result["column"] or "-",
+                            "true_result": result["true_result"],
+                            "noisy_result": result["noisy_result"],
+                            "epsilon": result["epsilon"],
+                            "sensitivity": result["sensitivity"],
+                            "noise_added": result["noise_added"],
+                        }
+                    ]
+                )
+
+                st.subheader("Query result")
+                st.dataframe(result_df, use_container_width=True)
+
+            st.caption(
+                "Run the same query several times with random_state = -1 to see different noisy results. "
+                "Try epsilon = 0.1 for more noise and epsilon = 10 for less noise."
+            )
+
+        except Exception as e:
+            st.error(str(e))
+
+
 def _render_export_and_save(manager: DatasetManager) -> None:
     st.subheader("Save & export")
     name = st.session_state.dataset_name or ""
@@ -429,6 +625,8 @@ def main() -> None:
     _render_data_view(manager, int(n_rows), dataset_key)
     st.divider()
     _render_actions(manager)
+    st.divider()
+    _render_differential_privacy_queries(manager)
     st.divider()
     _render_export_and_save(manager)
 
