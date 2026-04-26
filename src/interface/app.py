@@ -124,14 +124,35 @@ def _format_stats_table(stats_df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _style_data_by_role(df: pd.DataFrame, metadata: DatasetMetadata) -> pd.io.formats.style.Styler:
+    """Color columns based on metadata role."""
+    identifiers = set(metadata.identifiers)
+    quasi_identifiers = set(metadata.quasi_identifiers)
+    sensitive = set(metadata.sensitive_attributes)
+
+    def _column_style(col_name: str) -> str:
+        if col_name in sensitive:
+            return "background-color: #fff5f5; color: #1f2937;"
+        if col_name in identifiers:
+            return "background-color: #f3fbf5; color: #1f2937;"
+        if col_name in quasi_identifiers:
+            return "background-color: #fffdf2; color: #1f2937;"
+        return ""
+
+    style_map = {col: _column_style(col) for col in df.columns}
+    return df.style.apply(lambda _: [style_map[c] for c in df.columns], axis=1)
+
+
 def _render_data_view(manager: DatasetManager, n_rows: int, dataset_key: str) -> None:
     view = st.radio(
         "View", ["Original", "Modified"], horizontal=True, key=f"view_toggle_{dataset_key}"
     )
     df = manager.get_original_dataset() if view == "Original" else manager.get_working_dataset()
     display = df.head(n_rows)
-    st.dataframe(display, use_container_width=True, key=f"dataframe_{dataset_key}")
+    styled_display = _style_data_by_role(display, manager.metadata)
+    st.dataframe(styled_display, use_container_width=True, key=f"dataframe_{dataset_key}")
     st.caption(f"Showing first {n_rows} of {len(df)} rows. Columns: {list(df.columns)}")
+    st.caption("Legend: identifiers = green, quasi-identifiers = yellow, sensitive attributes = red.")
 
     use_working = view == "Modified"
     stats_df = manager.get_column_statistics(use_working=use_working)
@@ -146,6 +167,7 @@ def _render_actions(manager: DatasetManager) -> None:
     identifiers = meta.identifiers
     numeric_cols = [c for c, t in meta.column_types.items() if t == "numeric"]
     categorical_cols = [c for c, t in meta.column_types.items() if t == "categorical"]
+    all_cols = list(manager.get_working_dataset().columns)
 
     # ------------------------------------------------------------------ #
     # De-identification                                                    #
@@ -285,6 +307,62 @@ def _render_actions(manager: DatasetManager) -> None:
         st.success("Reset.")
         st.rerun()
 
+    # ------------------------------------------------------------------ #
+    # Masking                                                              #
+    # ------------------------------------------------------------------ #
+    st.subheader("Masking")
+    if not all_cols:
+        st.caption("No columns available for masking.")
+    else:
+        mask_col = st.selectbox("Column to mask", all_cols, key="mask_col")
+        mask_strategy = st.radio(
+            "Masking strategy",
+            options=[
+                "mask_first_k",
+                "mask_last_k",
+                "mask_before_first_space",
+                "mask_after_last_space",
+                "mask_regex",
+            ],
+            format_func=lambda s: {
+                "mask_first_k": "Mask first K characters",
+                "mask_last_k": "Mask last K characters",
+                "mask_before_first_space": "Mask before first space",
+                "mask_after_last_space": "Mask after last space",
+                "mask_regex": "Advanced: mask by regular expression",
+            }[s],
+            key="mask_strategy",
+        )
+
+        k_value: int | None = None
+        regex_value: str | None = None
+
+        if mask_strategy in {"mask_first_k", "mask_last_k"}:
+            k_value = int(
+                st.number_input("K", min_value=0, value=1, step=1, key="mask_k")
+            )
+
+        if mask_strategy == "mask_regex":
+            regex_value = st.text_input(
+                "Regex pattern",
+                value=r"\d",
+                key="mask_regex_pattern",
+                help="Example: \\d masks every digit.",
+            )
+
+        if st.button("Apply masking"):
+            try:
+                manager.mask_column(
+                    column=mask_col,
+                    strategy=mask_strategy,
+                    k=k_value,
+                    regex_pattern=regex_value,
+                )
+                st.success("Masking applied.")
+                st.rerun()
+            except Exception as e:
+                st.error(str(e))
+
 
 def _render_export_and_save(manager: DatasetManager) -> None:
     st.subheader("Save & export")
@@ -307,7 +385,7 @@ def _render_export_and_save(manager: DatasetManager) -> None:
                 st.error(str(e))
 
     export_filename = f"{st.session_state.dataset_name}.csv" if st.session_state.dataset_name else "export.csv"
-    st.caption(f"Export modified dataset to CSV as **{export_filename}** (save the dataset first to use its name).")
+    st.caption(f"Export modified dataset to CSV as **{export_filename}**.")
     export_folder = st.text_input("Export folder", value=DEFAULT_DATASETS_PATH, key="export_folder")
     if st.button("Export to CSV"):
         path = Path(export_folder) / export_filename

@@ -68,8 +68,9 @@ Used to create a `DatasetManager`. All listed columns must exist in the DataFram
 
 | Method | Description |
 |--------|-------------|
-| `generalize_numeric_column(column, bins=10, include_lowest=True)` | Bins the column into intervals and replaces values with interval labels (e.g. `"(10.0, 20.0]"`). Column must be declared `"numeric"` in metadata. |
+| `generalize_numeric_column(column, bins=10, include_lowest=True)` | Bins the column and replaces values with the bin midpoint. Integer columns remain integer (rounded); float columns remain float. Column must be declared `"numeric"` in metadata. |
 | `perturb_numeric_column(column, noise_std=0.05, random_state=None)` | Adds Gaussian noise scaled to the column range (max − min). `noise_std` is a fraction of that range (e.g. `0.05` → 5%). Values are clipped to the column min/max; int columns stay int (rounded), float stay float. |
+| `mask_column(column, strategy, k=None, regex_pattern=None)` | Masks one column by treating each value as string. Strategies: first K chars, last K chars, before first space, after last space, or regex-based replacement with `*`. |
 
 ### Utility / metrics
 

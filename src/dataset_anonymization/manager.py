@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import os
 import pickle
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -100,14 +101,7 @@ class DatasetManager:
         self,
         identifier_column: Optional[str] = None,
     ) -> None:
-        """Replace identifiers with random, non-reversible pseudonyms (one-way encryption).
-
-        Parameters
-        ----------
-        identifier_column:
-            Name of the identifier column in metadata.identifiers.
-            If None, all identifier columns are processed.
-        """
+        """Replace identifiers with random, non-reversible pseudonyms."""
         target_identifiers = self._select_identifiers(identifier_column)
 
         rng = np.random.default_rng()
@@ -126,14 +120,7 @@ class DatasetManager:
         self,
         identifier_column: Optional[str] = None,
     ) -> None:
-        """Replace identifiers with reversible, order-preserving pseudonyms (OPE-style).
-
-        Parameters
-        ----------
-        identifier_column:
-            Name of the identifier column in metadata.identifiers.
-            If None, all identifier columns are processed.
-        """
+        """Replace identifiers with reversible, order-preserving pseudonyms (OPE-style)."""
         target_identifiers = self._select_identifiers(identifier_column)
 
         for column in target_identifiers:
@@ -152,13 +139,7 @@ class DatasetManager:
         self,
         identifier_column: Optional[str] = None,
     ) -> None:
-        """Restore original identifier values from order-preserving pseudonyms.
-
-        Parameters
-        ----------
-        identifier_column:
-            Name of the identifier column to reverse, or None for all that have a mapping.
-        """
+        """Restore original identifier values from order-preserving pseudonyms."""
         if identifier_column is None:
             columns_to_reverse = list(self._ope_mappings.keys())
         else:
@@ -186,25 +167,7 @@ class DatasetManager:
         identifier_column: Optional[str] = None,
         secret_key: Optional[bytes] = None,
     ) -> None:
-        """Replace identifiers with reversible HMAC-based pseudonyms.
-
-        Each unique value is pseudonymised using HMAC-SHA256 with a secret key,
-        producing a deterministic token of the form HMAC-<hex>. The mapping is
-        stored internally so the transformation can be reversed with
-        reverse_hmac_pseudonyms(). This approach follows the ENISA pseudonymisation
-        best-practices document as a keyed-hash pseudonymisation technique: the same
-        input always produces the same output for a given key, but without the key
-        the pseudonym cannot be reversed by a third party.
-
-        Parameters
-        ----------
-        identifier_column:
-            Name of the identifier column in metadata.identifiers.
-            If None, all identifier columns are processed.
-        secret_key:
-            Secret key used for HMAC. If None, a random 32-byte key is generated
-            automatically and stored in the mapping for later reversal.
-        """
+        """Replace identifiers with reversible HMAC-based pseudonyms."""
         target_identifiers = self._select_identifiers(identifier_column)
 
         for column in target_identifiers:
@@ -228,16 +191,7 @@ class DatasetManager:
         self,
         identifier_column: Optional[str] = None,
     ) -> None:
-        """Restore original identifier values from HMAC-based pseudonyms.
-
-        Only columns previously processed with deidentify_with_hmac_pseudonyms
-        have a stored mapping; others are skipped.
-
-        Parameters
-        ----------
-        identifier_column:
-            Name of the identifier column to reverse, or None for all that have a mapping.
-        """
+        """Restore original identifier values from HMAC-based pseudonyms."""
         if identifier_column is None:
             columns_to_reverse = list(self._hmac_mappings.keys())
         else:
@@ -266,17 +220,7 @@ class DatasetManager:
         bins: int = 10,
         include_lowest: bool = True,
     ) -> None:
-        """Generalize a numeric column by replacing values with the midpoint of their bin.
-
-        Parameters
-        ----------
-        column:
-            Name of the numeric column in the working dataset.
-        bins:
-            Number of intervals for binning. Defaults to 10.
-        include_lowest:
-            Whether to include the lowest value in the first interval.
-        """
+        """Generalize a numeric column by replacing values with the midpoint of their bin."""
         self._ensure_column_exists(column)
         self._ensure_numeric_column(column)
 
@@ -298,17 +242,7 @@ class DatasetManager:
         noise_std: float = 0.05,
         random_state: Optional[int] = None,
     ) -> None:
-        """Perturb a numeric column by adding scale-aware Gaussian random noise.
-
-        Parameters
-        ----------
-        column:
-            Name of the numeric column in the working dataset.
-        noise_std:
-            Standard deviation of the Gaussian noise as a fraction of the column range.
-        random_state:
-            Optional random seed for reproducibility.
-        """
+        """Perturb a numeric column by adding scale-aware Gaussian random noise."""
         self._ensure_column_exists(column)
         self._ensure_numeric_column(column)
 
@@ -331,26 +265,73 @@ class DatasetManager:
         else:
             self._working_df[column] = perturbed
 
+    def mask_column(
+        self,
+        column: str,
+        strategy: str,
+        k: Optional[int] = None,
+        regex_pattern: Optional[str] = None,
+    ) -> None:
+        """Mask one column by treating each non-null value as a string."""
+        self._ensure_column_exists(column)
+
+        valid_strategies = {
+            "mask_first_k",
+            "mask_last_k",
+            "mask_before_first_space",
+            "mask_after_last_space",
+            "mask_regex",
+        }
+        if strategy not in valid_strategies:
+            raise ValueError(f"Unknown masking strategy '{strategy}'.")
+
+        if strategy in {"mask_first_k", "mask_last_k"}:
+            if k is None or k < 0:
+                raise ValueError("Parameter 'k' must be a non-negative integer.")
+
+        if strategy == "mask_regex":
+            if not regex_pattern:
+                raise ValueError("Parameter 'regex_pattern' is required for mask_regex strategy.")
+            try:
+                compiled_pattern = re.compile(regex_pattern)
+            except re.error as e:
+                raise ValueError(f"Invalid regex pattern: {e}") from e
+        else:
+            compiled_pattern = None
+
+        def _mask_value(value: Any) -> Any:
+            if pd.isna(value):
+                return value
+            text = str(value)
+            if strategy == "mask_first_k":
+                n = min(k or 0, len(text))
+                return ("*" * n) + text[n:]
+            if strategy == "mask_last_k":
+                n = min(k or 0, len(text))
+                if n == 0:
+                    return text
+                return text[:-n] + ("*" * n)
+            if strategy == "mask_before_first_space":
+                first_space = text.find(" ")
+                if first_space == -1:
+                    return text
+                return ("*" * first_space) + text[first_space:]
+            if strategy == "mask_after_last_space":
+                last_space = text.rfind(" ")
+                if last_space == -1:
+                    return text
+                return text[: last_space + 1] + ("*" * (len(text) - last_space - 1))
+            return compiled_pattern.sub("*", text)  # type: ignore[union-attr]
+
+        self._working_df[column] = self._working_df[column].apply(_mask_value)
+
     def generalize_categorical_column(
         self,
         column: str,
         mapping: Dict[str, str],
         default: Optional[str] = None,
     ) -> None:
-        """Generalize a categorical column by mapping values to broader categories.
-
-        Parameters
-        ----------
-        column:
-            Name of the categorical column in the working dataset.
-        mapping:
-            Dictionary where keys are original values and values are their
-            generalized replacements.
-            Example: {"Madrid": "Spain", "Barcelona": "Spain", "Paris": "France"}
-        default:
-            Optional fallback value for entries not covered by the mapping.
-            If None, unmatched values are kept as-is.
-        """
+        """Generalize a categorical column by mapping values to broader categories."""
         self._ensure_column_exists(column)
         declared_type = self._metadata.column_types.get(column)
         if declared_type != "categorical":
@@ -358,7 +339,6 @@ class DatasetManager:
                 f"Column '{column}' is not declared as categorical in metadata "
                 f"(got '{declared_type}'). Use generalize_numeric_column for numeric columns."
             )
-
         series = self._working_df[column]
         generalized = series.map(lambda v: mapping.get(v, default if default is not None else v))
         self._working_df[column] = generalized
@@ -370,19 +350,7 @@ class DatasetManager:
         epsilon: float = 1.0,
         random_state: Optional[int] = None,
     ) -> None:
-        """Perturb a numeric column by adding Laplace noise (differential privacy style).
-
-        Parameters
-        ----------
-        column:
-            Name of the numeric column in the working dataset.
-        sensitivity:
-            L1-sensitivity of the query. Defaults to 1.0.
-        epsilon:
-            Privacy budget. Smaller epsilon = more noise = stronger privacy.
-        random_state:
-            Optional random seed for reproducibility.
-        """
+        """Perturb a numeric column by adding Laplace noise (differential privacy style)."""
         self._ensure_column_exists(column)
         self._ensure_numeric_column(column)
 
