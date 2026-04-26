@@ -113,13 +113,17 @@ def _render_create_new() -> None:
 
 
 def _format_stats_table(stats_df: pd.DataFrame) -> pd.DataFrame:
-    """Round numeric stats and use '-' for missing/non-applicable values."""
+    """Round numeric stats and use '-' for missing/non-applicable values.
+
+    Each stat column is converted entirely to *str* so that PyArrow can
+    serialise the DataFrame without a mixed-type error.
+    """
     out = stats_df.copy()
     for col in ["mean", "min", "max", "std", "median"]:
         if col in out.columns:
             out[col] = out[col].apply(
-                lambda x: "-" if pd.isna(x) else round(float(x), 4)
-            )
+                lambda x: "-" if pd.isna(x) else str(round(float(x), 4))
+            ).astype(str)
     return out
 
 
@@ -298,6 +302,71 @@ def _render_actions(manager: DatasetManager) -> None:
                 st.rerun()
             except Exception as e:
                 st.error(str(e))
+
+    # ------------------------------------------------------------------ #
+    # K-Anonymity                                                          #
+    # ------------------------------------------------------------------ #
+    st.subheader("K-Anonymity")
+    quasi_cols = meta.quasi_identifiers
+    if not quasi_cols:
+        st.caption(
+            "No quasi-identifiers defined. "
+            "Assign the **Quasi-identifier** role to at least one column when creating the dataset."
+        )
+    else:
+        st.caption(
+            f"Active quasi-identifiers: **{', '.join(quasi_cols)}**. "
+            "The algorithm iteratively generalizes these columns until every "
+            "combination appears in at least *k* rows."
+        )
+        col_k, col_bins = st.columns(2)
+        with col_k:
+            k_anon = int(
+                st.number_input(
+                    "k value (minimum group size)",
+                    min_value=2,
+                    value=2,
+                    step=1,
+                    key="k_anon_k",
+                    help="Every combination of quasi-identifier values must appear in at least k rows.",
+                )
+            )
+        with col_bins:
+            bins_start = int(
+                st.number_input(
+                    "Initial bins (numeric columns)",
+                    min_value=2,
+                    value=10,
+                    step=1,
+                    key="k_anon_bins",
+                    help=(
+                        "Starting number of intervals for numeric quasi-identifier generalization. "
+                        "Halved each iteration down to a minimum of 2."
+                    ),
+                )
+            )
+
+        if st.button("Apply K-Anonymity", key="k_anon_btn"):
+            try:
+                result = manager.apply_k_anonymity(k=k_anon, bins_start=bins_start)
+                if result["achieved"]:
+                    st.success(
+                        f"k-anonymity k={k_anon} achieved in "
+                        f"{result['iterations']} iteration(s). "
+                        f"Minimum group size: **{result['min_group_size']}**."
+                    )
+                else:
+                    st.warning(
+                        f"Could not reach k={k_anon} with maximum generalization. "
+                        f"Minimum group size obtained: **{result['min_group_size']}** "
+                        f"after {result['iterations']} iteration(s). "
+                        "The dataset is left in the most generalized state achievable."
+                    )
+                #st.rerun()
+            except ValueError as e:
+                st.error(str(e))
+            except Exception as e:
+                st.error(f"Unexpected error: {e}")
 
 
 def _render_export_and_save(manager: DatasetManager) -> None:
