@@ -22,6 +22,7 @@ class DatasetMetadata:
     identifiers: List[str] = field(default_factory=list)
     quasi_identifiers: List[str] = field(default_factory=list)
     sensitive_attributes: List[str] = field(default_factory=list)
+    epsilon: float = 1.0
 
 
 class DatasetManager:
@@ -498,6 +499,301 @@ class DatasetManager:
             rows.append(row)
         return pd.DataFrame(rows)
 
+    def apply_k_anonymity(
+        self,
+        k: int,
+        bins_start: int = 10,
+    ) -> dict:
+        """Apply k-anonymity by iteratively generalizing quasi-identifier columns.
+
+        K-anonymity ensures that each combination of quasi-identifier values appears
+        in at least *k* rows. Only quasi-identifier columns are modified; the rest of
+        the working dataset keeps its current state.
+
+        Quasi-identifiers are restored from the original dataset before applying the
+        generalization, so previous generalizations on those columns are overwritten.
+
+        Strategy per column type
+        ------------------------
+        - **Numeric**: applies ``generalize_numeric_column`` starting with *bins_start*
+          bins, halving them each iteration down to a minimum of 2.
+        - **Categorical**: truncates one more trailing character per iteration and
+          replaces it with ``*`` (e.g. "28001" → "2800*" → "280**").
+
+        Parameters
+        ----------
+        k:
+            Minimum group size. Must be >= 2.
+        bins_start:
+            Initial number of bins for numeric quasi-identifiers. Must be >= 2.
+
+        Returns
+        -------
+        dict with keys:
+            ``achieved`` (bool): whether k-anonymity was reached.
+            ``min_group_size`` (int): smallest group size in the final dataset.
+            ``iterations`` (int): number of generalization rounds applied.
+
+        Raises
+        ------
+            ValueError:
+                If k < 2, bins_start < 2, no quasi-identifiers are defined, or only one
+                distinct quasi-identifier combination exists.
+        """
+        if k < 2:
+            raise ValueError("k must be >= 2.")
+        if bins_start < 2:
+            raise ValueError("bins_start must be >= 2.")
+
+        quasi_cols = list(self._metadata.quasi_identifiers)
+        if not quasi_cols:
+            raise ValueError("No quasi-identifiers are defined in the metadata.")
+
+        # Distinct QI combinations in the current working dataset
+        n_distinct = self._working_df[quasi_cols].drop_duplicates().shape[0]
+        if n_distinct <= 1:
+            raise ValueError(
+                "Only one distinct combination of quasi-identifier values exists. "
+                "K-anonymity cannot be applied."
+            )
+
+        numeric_quasi = [c for c in quasi_cols if self._metadata.column_types.get(c) == "numeric"]
+        categorical_quasi = [c for c in quasi_cols if c not in numeric_quasi]
+
+        # Baseline: original values for QI columns (generalisation always starts fresh)
+        qi_baseline: Dict[str, Any] = {c: self._original_df[c].copy() for c in quasi_cols}
+
+        # Generalisation state
+        current_bins: Dict[str, int] = {c: bins_start for c in numeric_quasi}
+        cat_prefix_len: Dict[str, int] = {}
+        for c in categorical_quasi:
+            max_len = int(qi_baseline[c].dropna().astype(str).str.len().max() or 1)
+            cat_prefix_len[c] = max_len  # full length = no truncation yet
+
+        def _apply_current_generalisation() -> None:
+            """Restore QI baseline then apply current generalisation settings."""
+            for col in quasi_cols:
+                self._working_df[col] = qi_baseline[col].copy()
+
+            for col in numeric_quasi:
+                self.generalize_numeric_column(col, bins=current_bins[col], include_lowest=True)
+
+            for col in categorical_quasi:
+                plen = cat_prefix_len[col]
+
+                def _truncate(val: Any, _plen: int = plen) -> Any:
+                    if pd.isna(val):
+                        return val
+                    s = str(val)
+                    return s[:_plen] + "*" * max(0, len(s) - _plen)
+
+                self._working_df[col] = self._working_df[col].apply(_truncate)
+
+        def _min_group_size() -> int:
+            counts = self._working_df.groupby(quasi_cols, dropna=False).size()
+            return int(counts.min())
+
+        def _can_reduce_more() -> bool:
+            return any(current_bins[c] > 2 for c in numeric_quasi) or any(
+                cat_prefix_len[c] > 1 for c in categorical_quasi
+            )
+
+        iterations = 0
+
+        while True:
+            _apply_current_generalisation()
+            iterations += 1
+
+            min_g = _min_group_size()
+            if min_g >= k:
+                return {"achieved": True, "min_group_size": min_g, "iterations": iterations}
+
+            if not _can_reduce_more():
+                return {"achieved": False, "min_group_size": min_g, "iterations": iterations}
+
+            # Reduce generalisation settings for next iteration
+            for col in numeric_quasi:
+                if current_bins[col] > 2:
+                    current_bins[col] = max(2, current_bins[col] // 2)
+            for col in categorical_quasi:
+                if cat_prefix_len[col] > 1:
+                    cat_prefix_len[col] -= 1
+
+    def set_epsilon(self, epsilon: float) -> None:
+        """Set the epsilon value used for differentially private queries."""
+        if epsilon <= 0:
+            raise ValueError("epsilon must be > 0.")
+        self._metadata.epsilon = float(epsilon)
+
+    def get_epsilon(self) -> float:
+        """Return the epsilon value used for differentially private queries."""
+        epsilon = float(getattr(self._metadata, "epsilon", 1.0))
+        if epsilon <= 0:
+            raise ValueError("epsilon must be > 0.")
+        return epsilon
+    
+    # ------------------------------------------------------------------ #
+    # Differential-privacy queries                                         #
+    # ------------------------------------------------------------------ #
+
+    def query_with_differential_privacy(
+        self,
+        query_type: str,
+        column: Optional[str] = None,
+        filter_column: Optional[str] = None,
+        filter_value: Optional[Any] = None,
+        random_state: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Execute an aggregate query with Laplace-mechanism differential privacy.
+
+        Queries are always executed against the **original** dataset so that
+        transformations applied to the working copy do not affect the privacy
+        analysis.  Laplace noise is drawn using the epsilon stored in metadata.
+
+        Parameters
+        ----------
+        query_type:
+            One of ``"count"``, ``"sum"``, ``"mean"``, ``"histogram"``.
+        column:
+            Target column.  Required for ``sum``, ``mean``, and ``histogram``.
+            Ignored for a plain ``count`` (counts all rows).
+        filter_column:
+            Optional column used as a WHERE filter.
+        filter_value:
+            Value to match in *filter_column* (equality check).
+        random_state:
+            Optional seed for reproducible noise.
+
+        Returns
+        -------
+        dict with keys:
+            ``query_type``, ``column``, ``filter_desc``,
+            ``true_result``, ``noisy_result``,
+            ``epsilon``, ``sensitivity``, ``noise_added``.
+
+            For ``histogram`` the result values are dicts ``{label: count}``.
+
+        Raises
+        ------
+        ValueError
+            If query_type is unknown, column is missing when required, or the
+            column is not numeric for sum/mean queries.
+        """
+        valid_types = {"count", "sum", "mean", "histogram"}
+        if query_type not in valid_types:
+            raise ValueError(
+                f"Unknown query type '{query_type}'. Choose from: {sorted(valid_types)}."
+            )
+
+        epsilon = self._metadata.epsilon
+        if epsilon <= 0:
+            raise ValueError("epsilon must be > 0.")
+
+        df = self._original_df.copy()
+
+        # ---- optional WHERE filter ----------------------------------------
+        filter_desc = "(no filter)"
+        if filter_column is not None and filter_value is not None:
+            if filter_column not in df.columns:
+                raise KeyError(f"Filter column '{filter_column}' does not exist.")
+            df = df[df[filter_column].astype(str) == str(filter_value)]
+            filter_desc = f"{filter_column} = {filter_value!r}"
+
+        rng = np.random.default_rng(random_state)
+
+        # ------------------------------------------------------------------ #
+        # COUNT                                                                #
+        # ------------------------------------------------------------------ #
+        if query_type == "count":
+            sensitivity = 1.0
+            true_result = float(len(df))
+            noise = rng.laplace(loc=0.0, scale=sensitivity / epsilon)
+            noisy_result = max(0.0, true_result + noise)
+            return {
+                "query_type": "count",
+                "column": column,
+                "filter_desc": filter_desc,
+                "true_result": true_result,
+                "noisy_result": round(noisy_result, 4),
+                "epsilon": epsilon,
+                "sensitivity": sensitivity,
+                "noise_added": round(noise, 4),
+            }
+
+        # ---- column required from here ------------------------------------
+        if column is None:
+            raise ValueError(f"'column' is required for query type '{query_type}'.")
+        if column not in df.columns:
+            raise KeyError(f"Column '{column}' does not exist in the dataset.")
+
+        # ------------------------------------------------------------------ #
+        # SUM                                                                  #
+        # ------------------------------------------------------------------ #
+        if query_type == "sum":
+            self._ensure_numeric_column(column)
+            col_series = pd.to_numeric(self._original_df[column], errors="coerce").dropna()
+            col_min, col_max = float(col_series.min()), float(col_series.max())
+            sensitivity = col_max - col_min if col_max != col_min else 1.0
+            true_result = float(pd.to_numeric(df[column], errors="coerce").sum())
+            noise = rng.laplace(loc=0.0, scale=sensitivity / epsilon)
+            noisy_result = true_result + noise
+            return {
+                "query_type": "sum",
+                "column": column,
+                "filter_desc": filter_desc,
+                "true_result": round(true_result, 4),
+                "noisy_result": round(noisy_result, 4),
+                "epsilon": epsilon,
+                "sensitivity": round(sensitivity, 4),
+                "noise_added": round(noise, 4),
+            }
+
+        # ------------------------------------------------------------------ #
+        # MEAN                                                                 #
+        # ------------------------------------------------------------------ #
+        if query_type == "mean":
+            self._ensure_numeric_column(column)
+            col_series = pd.to_numeric(self._original_df[column], errors="coerce").dropna()
+            col_min, col_max = float(col_series.min()), float(col_series.max())
+            n = max(len(df), 1)
+            sensitivity = (col_max - col_min) / n if col_max != col_min else 1.0 / n
+            true_result = float(pd.to_numeric(df[column], errors="coerce").mean())
+            noise = rng.laplace(loc=0.0, scale=sensitivity / epsilon)
+            noisy_result = float(np.clip(true_result + noise, col_min, col_max))
+            return {
+                "query_type": "mean",
+                "column": column,
+                "filter_desc": filter_desc,
+                "true_result": round(true_result, 4),
+                "noisy_result": round(noisy_result, 4),
+                "epsilon": epsilon,
+                "sensitivity": round(sensitivity, 6),
+                "noise_added": round(noise, 4),
+            }
+
+        # ------------------------------------------------------------------ #
+        # HISTOGRAM                                                            #
+        # ------------------------------------------------------------------ #
+        # query_type == "histogram"
+        counts = df[column].astype(str).value_counts().to_dict()
+        sensitivity = 1.0  # adding/removing one row changes at most one bin by 1
+        noisy_counts: Dict[str, Any] = {}
+        total_noise = 0.0
+        for label, cnt in counts.items():
+            noise = rng.laplace(loc=0.0, scale=sensitivity / epsilon)
+            total_noise += noise
+            noisy_counts[label] = max(0.0, round(cnt + noise, 4))
+        return {
+            "query_type": "histogram",
+            "column": column,
+            "filter_desc": filter_desc,
+            "true_result": counts,
+            "noisy_result": noisy_counts,
+            "epsilon": epsilon,
+            "sensitivity": sensitivity,
+            "noise_added": round(total_noise, 4),
+        }
+
     def _select_identifiers(self, identifier_column: Optional[str]) -> List[str]:
         """Return the identifier column(s) to operate on by name."""
         identifiers = self._metadata.identifiers
@@ -529,6 +825,12 @@ class DatasetManager:
         for column in all_referenced:
             if column not in defined_columns:
                 raise ValueError(f"Metadata role refers to unknown column '{column}'.")
+
+        if not hasattr(self._metadata, "epsilon"):
+            self._metadata.epsilon = 1.0
+
+        if self._metadata.epsilon <= 0:
+            raise ValueError("Epsilon must be greater than 0.")
 
     def _ensure_column_exists(self, column: str) -> None:
         """Ensure that the given column exists in the working dataset."""

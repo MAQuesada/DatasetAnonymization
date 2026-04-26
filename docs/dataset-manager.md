@@ -35,6 +35,7 @@ Used to create a `DatasetManager`. All listed columns must exist in the DataFram
 | `identifiers` | Column names that uniquely identify a person (e.g. ID, SSN). |
 | `quasi_identifiers` | Column names that can help re-identify when combined (e.g. age, zip). |
 | `sensitive_attributes` | Column names to protect (e.g. salary, diagnosis). |
+| `epsilon` | Privacy budget used for differentially private queries. Lower values add more noise; higher values add less noise. Default: `1.0`. |
 
 ---
 
@@ -71,6 +72,17 @@ Used to create a `DatasetManager`. All listed columns must exist in the DataFram
 | `generalize_numeric_column(column, bins=10, include_lowest=True)` | Bins the column and replaces values with the bin midpoint. Integer columns remain integer (rounded); float columns remain float. Column must be declared `"numeric"` in metadata. |
 | `perturb_numeric_column(column, noise_std=0.05, random_state=None)` | Adds Gaussian noise scaled to the column range (max − min). `noise_std` is a fraction of that range (e.g. `0.05` → 5%). Values are clipped to the column min/max; int columns stay int (rounded), float stay float. |
 | `mask_column(column, strategy, k=None, regex_pattern=None)` | Masks one column by treating each value as string. Strategies: first K chars, last K chars, before first space, after last space, or regex-based replacement with `*`. |
+| `apply_k_anonymity(k, bins_start=10)` | Applies k-anonymity over the metadata quasi-identifiers. Numeric quasi-identifiers are generalized with decreasing bins; categorical quasi-identifiers are generalized by replacing trailing characters with `*`. Only quasi-identifier columns are modified. Returns whether k-anonymity was achieved, the minimum group size, and the number of iterations. |
+
+### Differential privacy queries
+
+| Method | Description |
+|--------|-------------|
+| `set_epsilon(epsilon)` | Updates the epsilon value used by differentially private queries. Epsilon must be greater than 0. |
+| `get_epsilon()` | Returns the current epsilon value. |
+| `query_with_differential_privacy(query_type, column=None, filter_column=None, filter_value=None, random_state=None)` | Executes an aggregate query with Laplace noise. Supported query types are `count`, `sum`, `mean`, and `histogram`. Optional equality filters can be applied before running the query. Returns the true result, noisy result, epsilon, sensitivity, and noise added. |
+
+> For testing purposes, the UI can display both the true result and the noisy result. In a real privacy-preserving scenario, only the noisy result should be exposed.
 
 ### Utility / metrics
 
@@ -86,5 +98,8 @@ Used to create a `DatasetManager`. All listed columns must exist in the DataFram
 - At construction and after load: every column in `column_types`, `identifiers`, `quasi_identifiers`, and `sensitive_attributes` must exist in the dataset.
 - Numeric operations (`generalize_numeric_column`, `perturb_numeric_column`) require the column to exist and to be declared `"numeric"` in metadata.
 - De-identification methods require the given column (or all identifiers) to be in `metadata.identifiers`.
+- `epsilon` must be greater than 0.
+- `apply_k_anonymity()` requires `k >= 2`, `bins_start >= 2`, at least one quasi-identifier, and more than one distinct quasi-identifier combination.
+- Differentially private `sum` and `mean` queries require the selected column to be declared `"numeric"` in metadata.
 
 Violations raise `ValueError`, `KeyError`, `TypeError`, or `DatasetManagerLoadError` as appropriate.
