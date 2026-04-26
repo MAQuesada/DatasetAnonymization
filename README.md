@@ -28,7 +28,8 @@ In the UI you can:
 
 - **Load** a saved dataset (`.pkl`) from a folder (default `dataset_data`), or **create** a new one by uploading a CSV and filling metadata (column types, identifiers, quasi-identifiers, sensitive attributes). Validation must pass before continuing.
 - **View** the first N rows (configurable) of the original or modified dataset.
-- **Apply** de-identification (random or order-preserving pseudonyms, reverse OPE), numeric generalization or perturbation, and reset the working copy.
+- **Apply** de-identification (random or order-preserving pseudonyms, reverse OPE), numeric generalization or perturbation, masking, k-anonymity over quasi-identifiers, and reset the working copy.
+- **Run differentially private queries** over the loaded dataset using an epsilon value and Laplace noise. Supported queries include row count, numeric sum, numeric mean, and histogram/count by category.
 - **Export** the modified dataset to CSV (choose directory and filename) and **save** the manager to disk (`.pkl`) for later use.
 
 ## Project layout
