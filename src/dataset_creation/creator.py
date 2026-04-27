@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 import random
 from pathlib import Path
@@ -369,8 +370,8 @@ def prepare_all_data():
     )
 
 
-# =================== MAIN FUNCTION ============================================
-def generate_dataset(n, columns, f, progress_callback=None):
+# =================== MAIN FUNCTION --> CREATE INDIVIDUALS ============================================
+def generate_dataset_indv(n, columns, f, progress_callback=None):
     """
     INPUTS:
         - n => Number of samples we want to generate on dataset
@@ -381,7 +382,7 @@ def generate_dataset(n, columns, f, progress_callback=None):
 
     A dataframe is generated depending on some real data from INE. The user can select
     the following column:
-    
+
         - Name. If it is selected, Age would be depend on it. Name depends on Gender. Use "nombres_por_edad_media.xlsx" file
         - 1º surname. Use "apellidos_frecuencia.xls" to be generated.
         - 2º surname. Use "apellidos_frecuencia.xls" to be generated.
@@ -486,3 +487,150 @@ def generate_dataset(n, columns, f, progress_callback=None):
         data.append(row)
 
     return pd.DataFrame(data)
+
+
+# =================== MAIN FUNCTION --> CREATE RANDOM COLUMNS ============================================
+
+
+# -----------------CATEGORIES--------------------------
+def generate_random_categories(n, name_col, pos_val, f, weights=None):
+    """
+    INPUTS:
+        - n => Number of samples we want to generate on dataset
+        - name_col => Column name we want to generate
+        - pos_val => Possible categories
+        - f => Random distribution of samples
+        - weights => Appearencies proportion of the possible categories
+    OUTPUTS:
+        - Generated dataframe with only a column
+
+    Given the previous values, it generates a dataframe where each row is generated randomly using the weights proportion
+    and the specified possible values. If the proportion is wrong, an equal proportion will be used.
+    """
+    sz_pv = len(pos_val)
+    if weights is None or len(weights) < sz_pv - 1 or abs(sum(weights) - 1) > 1e-6:
+        # If there isnt any proportion or some values are missing, we will use an equal proportion
+        weights = [1 / sz_pv for _ in range(sz_pv)]
+    elif len(weights) == sz_pv - 1:
+        weights.append(1 - sum(weights))
+    elif len(weights) > sz_pv:
+        weights = weights[:sz_pv]
+
+    data = [mixed_sample(pos_val, weights, f) for _ in range(n)]
+
+    return pd.DataFrame({name_col: data})
+
+
+# ------------ NUMERICAL ----------------------
+def generate_random_numbers(n, name_col, low_v, sup_v, f, distribution="normal"):
+    """
+    INPUTS:
+        - n => Number of samples we want to generate on dataset
+        - name_col => Column name we want to generate
+        - low_v => Minimum possible value to be generated
+        - sup_v => Maximum possible value to be generated
+        - f => Random distribution of samples
+        - distribution (["normal" | "uniform" | "binomial", | "lognormal"]) => String indicating the kind of numeric distribution will be aplied
+    OUTPUTS:
+        - Generated dataframe with only a column
+
+    Given the previous values, it generates a dataframe where each row is generated randomly using the specified distribution.
+    If it is not specified, a normal distribution will be used.
+    """
+    if distribution == "uniform":
+        data = np.random.uniform(low_v, sup_v, n)
+
+    elif distribution == "normal":
+        mean = (low_v + sup_v) / 2
+        std = (sup_v - low_v) / 6
+        data = np.random.normal(mean, std, n)
+
+    elif distribution == "binomial":
+        p = 0.5
+        trials = int(sup_v)
+        data = np.random.binomial(trials, p, n)
+
+    elif distribution == "lognormal":
+        mean = (low_v + sup_v) / 2
+        sigma = 1
+        data = np.random.lognormal(mean, sigma, n)
+
+    else:
+        raise ValueError(f"Distribution '{distribution}' no supported")
+
+    # Obtains random values and random index creating a n list random from 0 to 1
+    noise_mask = np.random.rand(n) < f
+    noise_values = np.random.uniform(low_v, sup_v, n)
+
+    # Replace
+    data[noise_mask] = noise_values[noise_mask]
+
+    # Ensure the range
+    data = np.clip(data, low_v, sup_v)
+
+    return pd.DataFrame({name_col: data})
+
+
+def generate_dataset(n, columns, f, custom_columns=None, progress_callback=None):
+    """
+    INPUTS:
+        - n => Number of samples we want to generate on dataset
+        - columns => Kind of columns we want to generate
+        - f => Random distribution of samples
+    OUTPUTS:
+        - Generated dataframe
+
+    A dataframe is generated depending on some real data from INE. The user can select
+    the following column:
+
+        - Name. If it is selected, Age would be depend on it. Name depends on Gender. Use "nombres_por_edad_media.xlsx" file
+        - 1º surname. Use "apellidos_frecuencia.xls" to be generated.
+        - 2º surname. Use "apellidos_frecuencia.xls" to be generated.
+        - Gender. Depends on municipalities and, if the Municipality and Name aren't selected, it will depend on Age. Use "edades_generos_por_paises.csv" or "malagueños_por_generos.csv" files
+        - Age. Depends on Name if it is selected. Otherwise, it depends on nothing. Use "nombres_por_edad_media.xlsx" or "edades_generos_por_paises.csv" files
+        - Municipality. Use "malagueños_por_generos.csv" to be generated.
+
+    Moreover, the user can add some custom columns. These ones have the following format:
+    [
+        {
+            "type": "categorical",
+            "name": "Job",
+            "values": ["Engineer", "Doctor", "Teacher"],
+            "weights": [0.5, 0.3, 0.2],
+        },
+        {
+            "type": "numerical",
+            "name": "Salary",
+            "low": 1000,
+            "high": 5000,
+            "distribution": "normal",
+        }
+    ]
+    """
+
+    df = generate_dataset_indv(n, columns, f, progress_callback)
+    if custom_columns:
+        for col in custom_columns:
+            if col["type"] == "categorical":
+                new_df = generate_random_categories(
+                    n,
+                    col["name"],
+                    col["values"],
+                    f,
+                    col.get("weights"),
+                )
+
+            elif col["type"] == "numerical":
+                new_df = generate_random_numbers(
+                    n,
+                    col["name"],
+                    col["low"],
+                    col["high"],
+                    f,
+                    col.get("distribution", "normal"),
+                )
+
+            df = pd.concat([df, new_df], axis=1)
+    
+    return df 
+
