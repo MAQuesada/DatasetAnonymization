@@ -36,7 +36,7 @@ In the UI you can:
 **Streamlit UI** (from project root):
 
 ```bash
-uv run streamlit run src/interface/app_dataset_creation.py --server.port 8502
+uv run streamlit run src/interface/ui_creation/app_dataset_creation.py --server.port 8502
 ```
 
 We used a different port to avoid some conflicts with the Dataset Anonymization execution.

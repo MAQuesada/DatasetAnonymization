@@ -207,7 +207,7 @@ There are two supported types of custom columns:
 To launch the UI, run the following command from the project root:
 
 ```bash
-uv run streamlit run src/interface/app_dataset_creation.py --server.port 8502
+uv run streamlit run src/interface/ui_creation/app_dataset_creation.py --server.port 8502
 ```
 
 - The application runs on a custom port (8502)
