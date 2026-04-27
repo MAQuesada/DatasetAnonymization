@@ -44,6 +44,17 @@ We used a different port to avoid some conflicts with the Dataset Anonymization 
 In the UI you can:
 
 - **Select the required features for your fake dataset**. This includes selecting the number of rows, the desired columns and the random data appearance percentage. You can select the following columns: **Name**, **First surname**, **Second Surname**, **Age**, **Gender** and **Municipality of Malaga**.
+
+- **Create custom columns**. You can dynamically add new columns to the dataset by choosing between two types:
+  
+  - **Categorical columns**:  
+    Define a column name, a list of possible values (comma-separated), and optionally a list of weights (also comma-separated) to control how frequently each value appears. If weights are not provided or are invalid, all values will be generated with equal probability.
+  
+  - **Numerical columns**:  
+    Define a column name, a minimum and maximum value, and select a distribution type (`uniform`, `normal`, `binomial`, or `lognormal`). The values will be generated according to the selected distribution within the specified range.
+
+  You can add multiple custom columns and also remove them before generating the dataset.
+
 - **Generate** the fake dataset. Depending on whether it is the first execution or if the number of samples is quite large, it msy take some time
 
 When the dataset is generated, you will see:
@@ -52,7 +63,7 @@ When the dataset is generated, you will see:
 - A **Go back** button, which takes you back to the previous UI so you can generate a new dataset again.
 - A **Download** button to download the dataframe as a .csv. 
 
-It is recommended to generate one sample the first time you run it, and then go back and generate the desired dataset. This is because the first execution takes some time. 
+It is recommended to **generate one sample the first time you run it**, and then go back and generate the desired dataset. This is because **the first execution takes some time**. 
 
 ## Project layout
 

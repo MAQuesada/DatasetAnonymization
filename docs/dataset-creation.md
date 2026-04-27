@@ -61,6 +61,42 @@ Based on the dataset characteristics, the following columns can be generated:
 
 ---
 
+### Custom Columns for Generation
+
+In addition to the default columns, the user can create **as many custom columns as desired**.
+
+There are two supported types of custom columns:
+
+#### Categoricals
+
+| Required fields | Description | 
+|-----------------|-------------|
+| **Column name** | Name of the generated column |
+| **List of values** | Comma-separated list of possible category values |
+| **List of weights** | Comma-separated list of weights corresponding to each value |
+
+**Notes:**
+- The number of weights should match the number of values *(or be one less)*  
+- The sum of weights should be approximately **1**  
+- If the weights are invalid or missing, a **uniform distribution** will be applied 
+
+#### Numerical Columns
+
+| Required fields | Description |
+|-----------------|-------------|
+| **Column name** | Name of the generated column |
+| **Low value** | Minimum value that can be generated | 
+| **High value** | Maximum value that can be generated | 
+| **Distribution** | Statistical distribution used to generate the values |
+
+**Supported distributions:**
+- `uniform`
+- `normal`
+- `binomial`
+- `lognormal`
+
+---
+
 ### Public Function: `generate_dataset`
 
 #### Inputs / Outputs
@@ -70,15 +106,40 @@ Based on the dataset characteristics, the following columns can be generated:
 | Input | `n` | Number of samples to generate |
 | Input | `columns` | Dictionary where keys are column names and values are booleans indicating whether to include them |
 | Input | `f` | *Randomness factor*: probability of generating values outside the real-world distribution |
-| Input | `progress_callback` | Streamlit progress function used to update dataset generation progress |
+| Input | `custom_columns` | List of dictionaries defining custom columns |
+| Input | `progress_callback` | Function used to update progress (e.g., Streamlit progress bar) |
 | Output | `dataframe` | Generated dataset |
+
+**Custom Columns Format**
+
+```python
+[
+    {
+        "type": "categorical",
+        "name": "Job",
+        "values": ["Engineer", "Doctor", "Teacher"],
+        "weights": [0.5, 0.3, 0.2],
+    },
+    {
+        "type": "numerical",
+        "name": "Salary",
+        "low": 1000,
+        "high": 5000,
+        "distribution": "normal",
+    }
+]
+```
 
 ---
 
 ### Steps
 
+#### Step 1: Individual Data Generation (`generate_dataset_indv()`)
+
 1. **Load datasets into memory**  
-   Only the first sheet of the surname dataset is loaded. [`load_data()`](https://github.com/MAQuesada/DatasetAnonymization/blob/main/src/dataset_creation/creator.py)
+   - Load all required datasets into memory
+   - Only the first sheet of the surname dataset is loaded. 
+   [`load_data()`](https://github.com/MAQuesada/DatasetAnonymization/blob/main/src/dataset_creation/creator.py)
 
 2. **Preprocess and prepare data**  
    - Clean numeric formats  
@@ -87,12 +148,15 @@ Based on the dataset characteristics, the following columns can be generated:
    [`prepare_all_data()`](https://github.com/MAQuesada/DatasetAnonymization/blob/main/src/dataset_creation/creator.py)
 
 3. **Determine generation mode**  
-   This defines how **gender distribution** is calculated (most complex dependency).  
+   This defines how **gender distribution** is calculated (most complex dependency):
+    - Based on municipality
+    - Based on age (if name is not selected)
+    - Or global distribution
    [`get_gender_proportion()`](https://github.com/MAQuesada/DatasetAnonymization/blob/main/src/dataset_creation/creator.py)
 
 4. **Generate each sample**
 
-   4.1. If enabled, update the progress bar periodically  
+   4.1. **Progress update (optional)**. If enabled, update the progress bar periodically  
 
    4.2. **Municipality generation**  
    Generated using weighted sampling from real distribution  
@@ -125,6 +189,16 @@ Based on the dataset characteristics, the following columns can be generated:
    4.8. Store generated values as a JSON-like structure in a list
 
 5. Convert the list into a dataframe and return it
+
+#### Step 2: Custom Columns Generation
+
+1. **Iterate over custom columns.** For each column:
+
+   1.1. **Categorical** --> A column dataframe is generated using weighted sampling. (`generate_random_categories()`)
+
+   1.2. **Numerical** --> A column dataframe is generated using the specified distribution. (`generate_random_numbers()`)
+
+2. **Merge results.** Each generated column is concatenated to the main dataframe. 
 
 ---
 
