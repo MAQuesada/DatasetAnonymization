@@ -150,7 +150,7 @@ def _render_data_view(manager: DatasetManager, n_rows: int, dataset_key: str) ->
     df = manager.get_original_dataset() if view == "Original" else manager.get_working_dataset()
     display = df.head(n_rows)
     styled_display = _style_data_by_role(display, manager.metadata)
-    st.dataframe(styled_display, use_container_width=True, key=f"dataframe_{dataset_key}")
+    st.dataframe(styled_display, width="stretch", key=f"dataframe_{dataset_key}")
     st.caption(f"Showing first {n_rows} of {len(df)} rows. Columns: {list(df.columns)}")
     st.caption("Legend: identifiers = green, quasi-identifiers = yellow, sensitive attributes = red.")
 
@@ -159,7 +159,7 @@ def _render_data_view(manager: DatasetManager, n_rows: int, dataset_key: str) ->
     stats_display = _format_stats_table(stats_df)
     st.subheader("Column statistics")
     st.caption(f"Statistics for the **{view.lower()}** dataset.")
-    st.dataframe(stats_display, use_container_width=True, key=f"stats_{dataset_key}_{view}")
+    st.dataframe(stats_display, width="stretch", key=f"stats_{dataset_key}_{view}")
 
 
 def _render_actions(manager: DatasetManager) -> None:
