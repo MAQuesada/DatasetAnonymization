@@ -127,15 +127,22 @@ def _render_create_new() -> None:
 def _format_stats_table(stats_df: pd.DataFrame) -> pd.DataFrame:
     """Round numeric stats and use '-' for missing/non-applicable values.
 
-    Each stat column is converted entirely to *str* so that PyArrow can
-    serialise the DataFrame without a mixed-type error.
-    """
+        Each stat column is converted entirely to *str* so that PyArrow can
+        serialise the DataFrame without a mixed-type error.
+        """
     out = stats_df.copy()
+        
     for col in ["mean", "min", "max", "std", "median"]:
-        if col in out.columns:
-            out[col] = out[col].apply(
-                lambda x: "-" if pd.isna(x) else str(round(float(x), 4))
-            ).astype(str)
+            if col in out.columns:
+                out[col] = out[col].apply(
+                    lambda x: "-" if pd.isna(x) else str(round(float(x), 4))
+                ).astype(str)
+                
+    for col in ["mode", "mode_count"]:
+            if col in out.columns:
+                out[col] = out[col].apply(
+                    lambda x: "-" if pd.isna(x) else str(x)
+                ).astype(str)
     return out
 
 
