@@ -9,9 +9,11 @@ description = "Dataset anonymization project"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "openpyxl>=3.1.5",
     "pandas",
     "python-dotenv",
     "streamlit",
+    "xlrd>=2.0.2",
 ]
 
 [project.optional-dependencies]
@@ -20,7 +22,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/dataset_anonymization"]
+packages = ["src/dataset_anonymization", "src/dataset_creation"]
 
 [tool.uv]
 dev-dependencies = []
